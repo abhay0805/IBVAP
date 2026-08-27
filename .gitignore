@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+
+# Large generated video/output files
+output/
+runs/
+
+# Input/test videos
+videos/*.mp4
+videos/*.avi
+videos/*.mov
+
+# YOLO cache
+*.cache
+
+# OS files
+.DS_Store
+Thumbs.db
