@@ -53,6 +53,7 @@ class EventType(str, Enum):
     VIRTUAL_FENCE_BREACH = "VIRTUAL_FENCE_BREACH"
     NIGHT_MOVEMENT = "NIGHT_MOVEMENT"
     SUSPICIOUS_ACTIVITY = "SUSPICIOUS_ACTIVITY"
+    PLATE_READ = "PLATE_READ"
 
 
 @unique
@@ -179,6 +180,9 @@ class SecurityEvent:
     confidence: float
     direction: CrossingDirection | None
     evidence_path: str | None = None
+    plate_text: str | None = None
+    plate_confidence: float | None = None
+    plate_crop_path: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -195,6 +199,48 @@ class SecurityEvent:
             "confidence": round(float(self.confidence), 3),
             "direction": None if self.direction is None else self.direction.value,
             "evidence_path": self.evidence_path,
+            "plate_text": self.plate_text,
+            "plate_confidence": (
+                None
+                if self.plate_confidence is None
+                else round(float(self.plate_confidence), 3)
+            ),
+            "plate_crop_path": self.plate_crop_path,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PlateReading:
+    """A validated automatic number-plate reading for one tracked vehicle.
+
+    Produced off the main detection thread by the ANPR pipeline and reused
+    verbatim when building :class:`SecurityEvent` / :class:`SecurityAlert`
+    records so the persisted plate data always matches what was read.
+    """
+
+    plate_text: str
+    confidence: float
+    track_id: int
+    class_name: str
+    frame_number: int
+    bbox: tuple[int, int, int, int] = (-1, -1, -1, -1)
+    crop_path: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.plate_text:
+            raise ValueError("plate_text must be a non-empty normalized plate")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError(f"confidence {self.confidence} out of [0, 1]")
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "plate_text": self.plate_text,
+            "confidence": round(float(self.confidence), 3),
+            "track_id": self.track_id,
+            "class_name": self.class_name,
+            "frame_number": self.frame_number,
+            "bbox": list(self.bbox),
+            "crop_path": self.crop_path,
         }
 
 

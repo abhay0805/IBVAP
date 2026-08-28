@@ -36,7 +36,10 @@ CREATE TABLE IF NOT EXISTS security_events (
     status         TEXT NOT NULL,
     confidence     REAL,
     direction      TEXT,
-    evidence_path  TEXT
+    evidence_path  TEXT,
+    plate_text     TEXT,
+    plate_confidence REAL,
+    plate_crop_path  TEXT
 );
 
 CREATE TABLE IF NOT EXISTS alerts (
@@ -63,12 +66,24 @@ CREATE INDEX IF NOT EXISTS idx_alerts_severity    ON alerts (severity);
 """
 
 
+# Nullable columns added iteratively as the platform grows. Cross-version
+# databases are upgraded in-place by _migrate() below.
+_ANPR_COLUMNS: dict[str, str] = {
+    "plate_text": "TEXT",
+    "plate_confidence": "REAL",
+    "plate_crop_path": "TEXT",
+}
+
+
 class Database:
     """Thread-safe-by-convention SQLite store for events and alerts."""
 
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        # Guarded, idempotent schema migration for databases created by older
+        # versions of IBVAP so they continue to open without error.
+        self._migrate()
 
     # ---------------------------------------------------------------- helpers
     @contextmanager
@@ -83,10 +98,35 @@ class Database:
         finally:
             connection.close()
 
-    def initialize(self) -> None:
-        """Create the schema if it does not already exist."""
+    def _migrate(self) -> None:
+        """Add columns that have appeared in newer schemas, in place."""
         with self._connect() as connection:
-            connection.executescript(_SCHEMA)
+            connection.executescript(_SCHEMA)  # ensure base tables exist
+            self._add_missing_columns(connection, "security_events", _ANPR_COLUMNS)
+
+    @staticmethod
+    def _add_missing_columns(
+        connection: sqlite3.Connection,
+        table: str,
+        columns: dict[str, str],
+    ) -> None:
+        existing = {
+            row["name"]
+            for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        for name, declaration in columns.items():
+            if name in existing:
+                continue
+            # Note: SQLite (tested up to 3.50) rejects
+            # ``ADD COLUMN IF NOT EXISTS`` with a syntax error, so the guard
+            # must come from the PRAGMA inspection above.
+            connection.execute(
+                f'ALTER TABLE {table} ADD COLUMN "{name}" {declaration}'
+            )
+
+    def initialize(self) -> None:
+        """Create the schema if it does not already exist (idempotent)."""
+        self._migrate()
 
     def reset(self) -> None:
         """Drop all tables and rebuild an empty schema (dev convenience)."""
@@ -105,8 +145,8 @@ class Database:
                 INSERT OR IGNORE INTO security_events (
                     event_id, event_type, object_type, track_id, camera_id,
                     timestamp, frame_number, status, confidence, direction,
-                    evidence_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    evidence_path, plate_text, plate_confidence, plate_crop_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.event_id,
@@ -120,6 +160,13 @@ class Database:
                     round(float(event.confidence), 3),
                     None if event.direction is None else event.direction.value,
                     event.evidence_path,
+                    event.plate_text,
+                    (
+                        None
+                        if event.plate_confidence is None
+                        else round(float(event.plate_confidence), 3)
+                    ),
+                    event.plate_crop_path,
                 ),
             )
 

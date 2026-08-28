@@ -24,13 +24,27 @@ from datetime import datetime
 from typing import Any
 
 import cv2
+import numpy as np
 from ultralytics import YOLO
 
-from alerts import AlertEngine, Fence
+from anpr import (
+    AnprPipeline,
+    PlateReader,
+    PlateTracker,
+    VEHICLE_CLASSES,
+    create_plate_detector,
+)
+from alerts import (
+    DEFAULT_STATUS,
+    AlertEngine,
+    Fence,
+    build_plate_alert_message,
+    severity_for_event,
+)
 from channels import AlertChannel, ConsoleChannel, JsonChannel, LogChannel, WebhookChannel
 from config import Settings, load_settings
 from database import Database
-from models import Detection
+from models import Detection, EventType, PlateReading, SecurityAlert, SecurityEvent
 
 LOG = logging.getLogger("ibvap.detect")
 
@@ -217,6 +231,7 @@ def print_session_summary(
     settings: Settings,
     events_count: int,
     alerts_count: int,
+    plates_count: int,
     frames_done: int,
     elapsed_s: float,
 ) -> None:
@@ -224,6 +239,8 @@ def print_session_summary(
         "Processing complete - %d frames in %.1fs, %d event(s), %d alert(s)",
         frames_done, elapsed_s, events_count, alerts_count,
     )
+    if plates_count:
+        LOG.info("ANPR plates read : %d", plates_count)
     LOG.info("Video out : %s", settings.video_out_path)
     LOG.info("Events    : %s", settings.events_path)
     LOG.info("Alerts    : %s", settings.alerts_path)
@@ -284,6 +301,33 @@ def run(settings: Settings) -> int:
     if settings.classes is not None:
         track_kwargs["classes"] = list(dict.fromkeys(settings.classes))
 
+    anpr: AnprPipeline | None = None
+    plate_tracker: PlateTracker | None = None
+    plate_event_seq = 0
+    plate_total = 0
+    if settings.anpr_enabled:
+        detector = create_plate_detector(settings.anpr_model_path)
+        reader = PlateReader(
+            min_confidence=settings.anpr_confidence, logger=LOG
+        )
+        anpr = AnprPipeline(
+            detector,
+            reader,
+            evidence_dir=settings.evidence_dir,
+            queue_size=32,
+        )
+        plate_tracker = PlateTracker(
+            min_confirmations=2,
+            stale_frames=max(int(fps * 2), 5),
+        )
+        anpr.start()
+        LOG.info(
+            "ANPR enabled | detector=%s | OCR conf>=%.2f | every %d frames/track",
+            type(detector).__name__,
+            settings.anpr_confidence,
+            settings.anpr_frame_interval,
+        )
+
     frame_number = 0
     events_total = 0
     alerts_total = 0
@@ -301,6 +345,36 @@ def run(settings: Settings) -> int:
             detections = extract_detections(results[0], frame_number)
             stamp = datetime.now().astimezone()
             update = engine.update(frame_number, detections, stamp)
+
+            # Enqueue one plate job per vehicle track, throttled to
+            # ``anpr_frame_interval`` frames per track so OCR load stays
+            # bounded; the worker thread never stalls this loop.
+            last_anpr_at: dict[int, int] = {}
+            if anpr is not None:
+                for detection in detections:
+                    if detection.class_name not in VEHICLE_CLASSES:
+                        continue
+                    if (
+                        frame_number - last_anpr_at.get(detection.track_id, 0)
+                        < settings.anpr_frame_interval
+                    ):
+                        continue
+                    last_anpr_at[detection.track_id] = frame_number
+                    crop = frame[
+                        detection.y1:detection.y2, detection.x1:detection.x2
+                    ]
+                    if crop.size == 0:
+                        continue
+                    anpr.process(
+                        np.ascontiguousarray(crop),
+                        track_id=detection.track_id,
+                        class_name=detection.class_name,
+                        frame_number=frame_number,
+                        vehicle_bbox=(
+                            detection.x1, detection.y1,
+                            detection.x2, detection.y2,
+                        ),
+                    )
 
             # label this frame's fresh events as intrusions and reset timer
             for alert in update.alerts:
@@ -329,27 +403,36 @@ def run(settings: Settings) -> int:
             for event in update.events:
                 path = capture_evidence(frame, evidence_path_for(settings, event.event_id))
                 persisted = replace_path(event, path)
-                db.insert_event(persisted)
-                events_json.append(persisted.as_dict())
                 evidence_by_event[persisted.event_id] = persisted.evidence_path or ""
-                events_total += 1
-                LOG.warning(
-                    "EVENT %s | %s at %s | %s #%s | frame %d",
-                    persisted.event_id,
-                    persisted.event_type.value,
-                    persisted.camera_id,
-                    persisted.object_type,
-                    persisted.track_id,
-                    persisted.frame_number,
-                )
+                events_total += persist_event(db, events_json, persisted)
 
             for alert in update.alerts:
                 evidence = evidence_by_event.get(alert.event_id or "")
                 complete = replace_path(alert, evidence)
-                for channel in channels:
-                    channel.send(complete)
-                db.insert_alert(complete)
-                alerts_total += 1
+                alerts_total += send_alert(channels, db, complete)
+
+            # harvest plate readings finished by the ANPR worker; promoting
+            # one validated read per track (deduplicated by the tracker).
+            if anpr is not None and plate_tracker is not None:
+                plate_tracker.tick(frame_number)
+                for reading in anpr.drain():
+                    promoted = plate_tracker.submit(reading, frame_number)
+                    if promoted is None:
+                        continue
+                    plate_event_seq += 1
+                    event = build_plate_event(
+                        promoted,
+                        camera_id=settings.camera_id,
+                        status=DEFAULT_STATUS,
+                        event_id=f"PLT-{plate_event_seq:04d}",
+                        stamp=stamp,
+                    )
+                    events_total += persist_event(db, events_json, event)
+                    alert = build_plate_alert(
+                        event, promoted, alert_id=f"PLA-{plate_event_seq:04d}"
+                    )
+                    alerts_total += send_alert(channels, db, alert)
+                    plate_total += 1
 
             video_writer.write(frame)
 
@@ -379,11 +462,13 @@ def run(settings: Settings) -> int:
         webhook.close()
         events_json.close()
         alerts_json.close()
+        if anpr is not None:
+            anpr.close()
 
     elapsed = time.monotonic() - start_wall
     loop_seconds = time.monotonic() - start_loop
     print_session_summary(
-        settings, events_total, alerts_total, frame_number, elapsed,
+        settings, events_total, alerts_total, plate_total, frame_number, elapsed,
     )
     if frame_number == 0 and not settings.limit_frames:
         LOG.error("No frames were read from source")
@@ -398,6 +483,94 @@ def run(settings: Settings) -> int:
 
 def replace_path(record: Any, path: str | None) -> Any:
     return replace(record, evidence_path=path)
+
+
+# --------------------------------------------------------- event/alert plumbing
+
+
+def persist_event(db: Database, events_json: JsonChannel, event: SecurityEvent) -> int:
+    """Write one event to the database and the JSON feed; returns counter bump."""
+    db.insert_event(event)
+    events_json.append(event.as_dict())
+    LOG.warning(
+        "EVENT %s | %s at %s | %s #%s | frame %d",
+        event.event_id,
+        event.event_type.value,
+        event.camera_id,
+        event.object_type,
+        event.track_id,
+        event.frame_number,
+    )
+    return 1
+
+
+def send_alert(
+    channels: list[AlertChannel],
+    db: Database,
+    alert: SecurityAlert,
+) -> int:
+    """Dispatch one alert through every channel and persist it."""
+    for channel in channels:
+        channel.send(alert)
+    db.insert_alert(alert)
+    return 1
+
+
+def build_plate_event(
+    reading: PlateReading,
+    *,
+    camera_id: str,
+    status: str,
+    event_id: str,
+    stamp: datetime,
+) -> SecurityEvent:
+    """Promote a validated OCR read into a persistable PLATE_READ event."""
+    return SecurityEvent(
+        event_id=event_id,
+        event_type=EventType.PLATE_READ,
+        object_type=reading.class_name,
+        track_id=reading.track_id,
+        camera_id=camera_id,
+        timestamp=stamp,
+        frame_number=reading.frame_number,
+        status=status,
+        confidence=reading.confidence,
+        direction=None,
+        evidence_path=reading.crop_path,
+        plate_text=reading.plate_text,
+        plate_confidence=reading.confidence,
+        plate_crop_path=reading.crop_path,
+    )
+
+
+def build_plate_alert(
+    event: SecurityEvent,
+    reading: PlateReading,
+    *,
+    alert_id: str,
+) -> SecurityAlert:
+    """Build the notification payload for a promoted plate event."""
+    return SecurityAlert(
+        alert_id=alert_id,
+        event_id=event.event_id,
+        event_type=EventType.PLATE_READ,
+        object_type=event.object_type,
+        track_id=event.track_id,
+        camera_id=event.camera_id,
+        severity=severity_for_event(EventType.PLATE_READ, event.object_type),
+        status=event.status,
+        message=build_plate_alert_message(
+            event.object_type, reading.plate_text, event.camera_id
+        ),
+        timestamp=event.timestamp,
+        frame_number=event.frame_number,
+        evidence_path=event.evidence_path,
+        metadata={
+            "plate_text": reading.plate_text,
+            "plate_confidence": round(float(reading.confidence), 3),
+            "plate_bbox": list(reading.bbox),
+        },
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -9,3 +9,7 @@ torch==2.13.0
 torchvision==0.28.0
 numpy==2.5.2
 lap==0.5.13
+
+# ANPR OCR engine (v1.7.2 pulls opencv-python-headless; keep opencv-python
+# installed as well so cv2 stays on the same wheel for the CV pipeline).
+easyocr==1.7.2

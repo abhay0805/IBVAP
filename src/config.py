@@ -49,6 +49,12 @@ class Settings:
     classes: list[int] | None = None
     limit_frames: int = 0  # 0 = process the whole video
 
+    # ANPR (automatic number-plate recognition)
+    anpr_enabled: bool = True
+    anpr_model_path: Path | None = None  # None = classical CV plate detector
+    anpr_confidence: float = 0.5
+    anpr_frame_interval: int = 5  # enqueue one OCR job per track every N frames
+
     # outbound notification
     webhook_url: str | None = None
     webhook_token: str | None = None
@@ -96,6 +102,16 @@ class Settings:
             )
         if self.limit_frames < 0:
             errors.append(f"limit_frames must be >= 0, got {self.limit_frames}")
+        if not 0.0 < self.anpr_confidence <= 1.0:
+            errors.append(
+                f"anpr_confidence must be in (0, 1], got {self.anpr_confidence}"
+            )
+        if self.anpr_frame_interval < 1:
+            errors.append(
+                f"anpr_frame_interval must be >= 1, got {self.anpr_frame_interval}"
+            )
+        if self.anpr_model_path is not None and not self.anpr_model_path.exists():
+            errors.append(f"ANPR model not found: {self.anpr_model_path}")
 
         if not self.video_path.exists():
             errors.append(f"video not found: {self.video_path}")
@@ -153,6 +169,18 @@ def build_parser() -> argparse.ArgumentParser:
                              "(default: all).")
     parser.add_argument("--limit-frames", type=int, default=None,
                         help="Stop after this many frames (0 = whole video).")
+    parser.add_argument("--anpr-enabled", action=argparse.BooleanOptionalAction,
+                        default=None,
+                        help="Enable automatic number-plate recognition.")
+    parser.add_argument("--anpr-model", type=Path, default=None,
+                        dest="anpr_model_path",
+                        help="Optional fine-tuned YOLO plate detector .pt "
+                             "(default: classical CV detector).")
+    parser.add_argument("--anpr-confidence", type=float, default=None,
+                        help="Minimum OCR confidence to accept a plate (0-1).")
+    parser.add_argument("--anpr-interval", type=int, default=None,
+                        dest="anpr_frame_interval",
+                        help="Run one OCR job per track every N frames.")
     parser.add_argument("--webhook-url", type=str, default=None,
                         help="POST alerts to this HTTP(S) endpoint.")
     parser.add_argument("--webhook-token", type=str, default=None,

@@ -107,6 +107,26 @@ def build_alert_message(
     return f"{object_type.title()} {action} at camera {camera_id}"
 
 
+def build_plate_alert_message(
+    object_type: str,
+    plate_text: str,
+    camera_id: str,
+) -> str:
+    return f"Plate {plate_text} read on {object_type} at camera {camera_id}"
+
+
+def severity_for_event(event_type: EventType, object_type: str) -> Severity:
+    """Severity policy keyed by event type plus object class.
+
+    A routine plate read is intelligence, not a threat, so it stays at
+    LOW to avoid alarm fatigue on a control-room console; fence breaches
+    retain the border-relevance ranking from :func:`default_severity`.
+    """
+    if event_type is EventType.PLATE_READ:
+        return Severity.LOW
+    return default_severity(object_type)
+
+
 # ---------------------------------------------------------------- track state
 
 
