@@ -3,7 +3,17 @@ import cv2
 import os
 import json
 from datetime import datetime
-from database import initialize_database, save_event
+from database import initialize_database, save_event, get_next_event_number
+from anpr import recognize_plate
+from blockchain import add_event_to_blockchain, initialize_blockchain
+from analytics import is_low_light_frame, apply_night_vision_enhancement, SuspiciousActivityTracker, log_suspicious_activity
+
+# Initialize Blockchain & Analytics
+initialize_blockchain()
+suspicious_tracker = SuspiciousActivityTracker()
+NIGHT_MODE_AUTO = True
+
+
 
 
 # -----------------------------
@@ -57,9 +67,8 @@ print(f"FPS: {fps}")
 
 os.makedirs("output", exist_ok=True)
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
-if os.path.exists("output/ibvap.db"):
-    os.remove("output/ibvap.db")
 
+    
 initialize_database()
 
 
@@ -84,13 +93,14 @@ out = cv2.VideoWriter(
 previous_positions = {}
 triggered_ids = set()
 active_alerts = {}
-
-
+anpr_cache = {}
+VEHICLE_CLASSES = {'car', 'truck', 'bus', 'motorbike'}
 
 # Store security events
 events = []
 
-event_counter = 1
+event_counter = get_next_event_number()
+
 
 
 # -----------------------------
@@ -170,31 +180,64 @@ while True:
 
             class_name = model.names[class_id]
 
+            # -------------------------
+            # ANPR for Vehicle Objects
+            # -------------------------
+            plate_extra_label = ""
+            box_color = (0, 255, 0)
+
+            if class_name in VEHICLE_CLASSES:
+                # Perform ANPR on vehicle crop if missing from cache or periodically
+                if track_id not in anpr_cache or frame_number % 20 == 0:
+                    vehicle_crop = frame[max(0, y1):min(height, y2), max(0, x1):min(width, x2)]
+                    if vehicle_crop is not None and vehicle_crop.size > 0:
+                        anpr_res = recognize_plate(vehicle_crop)
+                        if anpr_res.get("normalized_plate") or track_id not in anpr_cache:
+                            anpr_cache[track_id] = anpr_res
+
+                if track_id in anpr_cache:
+                    info = anpr_cache[track_id]
+                    plate_num = info.get("normalized_plate", "")
+                    status = info.get("status", "UNKNOWN")
+                    if plate_num:
+                        plate_extra_label = f" | Plate: {plate_num} [{status}]"
+                    else:
+                        plate_extra_label = f" | [{status}]"
+                    
+                    if status == "UNKNOWN":
+                        box_color = (0, 165, 255)  # Orange for UNKNOWN vehicles
+                    elif status == "VERIFIED":
+                        box_color = (0, 255, 0)    # Green for VERIFIED vehicles
 
             # -------------------------
-            # Draw bounding box
+            # Draw bounding box & label
             # -------------------------
 
             cv2.rectangle(
                 frame,
                 (x1, y1),
                 (x2, y2),
-                (0, 255, 0),
+                box_color,
                 2
             )
 
-            label = f"{class_name} | Track ID: {track_id}"
+            label = f"{class_name} | Track ID: {track_id}{plate_extra_label}"
 
             cv2.putText(
                 frame,
                 label,
                 (x1, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
+                0.65,
+                box_color,
                 2
             )
 
+
+            # Analyze trajectory for loitering & rapid approach anomalies
+            sa_alerts = suspicious_tracker.analyze_object(track_id, class_name, center_x, center_y, FENCE_Y)
+            for sa in sa_alerts:
+                log_suspicious_activity(sa)
 
             # Center point
 
@@ -245,6 +288,10 @@ while True:
                         "%Y-%m-%d %H:%M:%S"
                     )
 
+                    # Determine security event status based on vehicle registry
+                    vehicle_status = anpr_cache.get(track_id, {}).get("status", "UNAUTHORIZED")
+                    event_status = "VERIFIED_VEHICLE" if vehicle_status == "VERIFIED" else "UNAUTHORIZED"
+
                     event = {
                         "event_id": event_id,
                         "event_type": "VIRTUAL_FENCE_BREACH",
@@ -253,9 +300,10 @@ while True:
                         "camera_id": "BOP-CAM-01",
                         "timestamp": timestamp,
                         "frame_number": frame_number,
-                        "status": "UNAUTHORIZED",
+                        "status": event_status,
                         "evidence_path": f"output/evidence/{event_id}.jpg"
                     }
+
                     events.append(event)
                     save_event(event)
 
@@ -264,7 +312,7 @@ while True:
                     triggered_ids.add(track_id)
 
                     # -------------------------
-                    # Capture evidence
+                    # Capture evidence & Blockchain Hashing
                     # -------------------------
 
                     evidence_path = os.path.join(
@@ -276,6 +324,11 @@ while True:
                         evidence_path,
                         frame
                     )
+
+                    # Mine Cryptographic Block in Audit Ledger
+                    block_hash, ev_hash = add_event_to_blockchain(event_id, event, evidence_path)
+                    print(f"Evidence saved: {evidence_path} | Block Hash: {block_hash[:16]}...")
+
 
                     print(f"Evidence saved: {evidence_path}")
 

@@ -18,6 +18,10 @@ videos/*.mov
 # YOLO cache
 *.cache
 
+# Databases
+*.db
+*.sqlite
+
 # OS files
 .DS_Store
 Thumbs.db
