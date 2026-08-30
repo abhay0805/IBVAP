@@ -21,3 +21,6 @@ videos/*.mov
 # OS files
 .DS_Store
 Thumbs.db
+
+nextWeb/.next/
+nextWeb/node_modules/

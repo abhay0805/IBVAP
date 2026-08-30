@@ -52,7 +52,7 @@ class Settings:
     # ANPR (automatic number-plate recognition)
     anpr_enabled: bool = True
     anpr_model_path: Path | None = None  # None = classical CV plate detector
-    anpr_confidence: float = 0.5
+    anpr_confidence: float = 0.35
     anpr_frame_interval: int = 5  # enqueue one OCR job per track every N frames
 
     # outbound notification
