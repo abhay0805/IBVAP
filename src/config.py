@@ -48,6 +48,8 @@ class Settings:
 
     classes: list[int] | None = None
     limit_frames: int = 0  # 0 = process the whole video
+    video_out_filename: str = VIDEO_OUT_FILENAME  # overridable via --output-video
+    save_video: bool = False  # only write video to disk if explicitly enabled
 
     # ANPR (automatic number-plate recognition)
     anpr_enabled: bool = True
@@ -84,7 +86,7 @@ class Settings:
 
     @property
     def video_out_path(self) -> Path:
-        return self.output_dir / VIDEO_OUT_FILENAME
+        return self.output_dir / self.video_out_filename
 
     # ------------------------------------------------------------ validation
     def validate(self, *, prepare_dirs: bool = True) -> None:
@@ -154,7 +156,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Directory for all generated artifacts.")
     parser.add_argument("--confidence", type=float, default=None,
                         help="Minimum detection confidence (0-1).")
-    parser.add_argument("--fence-y", type=int, default=None,
+    parser.add_argument("--fence", "--fence-y", type=int, default=None,
+                        dest="fence_y",
                         help="Y coordinate of the virtual fence line.")
     parser.add_argument("--camera-id", type=str, default=None,
                         help="Identifier reported in events and alerts.")
@@ -169,6 +172,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "(default: all).")
     parser.add_argument("--limit-frames", type=int, default=None,
                         help="Stop after this many frames (0 = whole video).")
+    parser.add_argument("--output-video", type=str, default=None,
+                        dest="video_out_filename",
+                        help="Output video filename inside --output-dir (default: fence_detection.mp4).")
+
     parser.add_argument("--anpr-enabled", action=argparse.BooleanOptionalAction,
                         default=None,
                         help="Enable automatic number-plate recognition.")
@@ -190,7 +197,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--webhook-retries", type=int, default=None,
                         dest="webhook_max_retries",
                         help="Maximum delivery attempts per alert.")
-    parser.add_argument("--show-video", action="store_true",
+    parser.add_argument("-s", "--save", "--save-video", action="store_true",
+                        dest="save_video",
+                        help="Save annotated surveillance video to disk.")
+    parser.add_argument("--show", "--show-video", action="store_true",
+                        dest="show_video",
                         help="Display the annotated frame in a window.")
     parser.add_argument("--verbose", action="store_true",
                         help="Enable debug logging.")

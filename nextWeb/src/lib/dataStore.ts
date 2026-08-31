@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import { PATHS } from "./config";
 import { SecurityEvent, SecurityAlert, SystemStats, PlateRecord, CameraSensor } from "./types";
 
@@ -9,22 +10,22 @@ const ACKNOWLEDGED_ALERTS = new Set<string>();
 export const CAMERA_SENSORS: CameraSensor[] = [
   {
     id: "BOP-CAM-01",
-    name: "North Border Post (Primary)",
+    name: "North Border Post (Cam 1)",
     location: "Sector 4 Northern Tripwire",
     status: "ONLINE",
-    resolution: "2560x1440",
-    fps: 25.0,
+    resolution: "1280x720",
+    fps: 30.0,
     fenceY: 700,
     isPrimary: true,
   },
   {
     id: "BOP-CAM-02",
-    name: "East Perimeter Gate",
+    name: "East Perimeter Gate (Cam 2 - ANPR)",
     location: "Sector 4 Eastern Access Road",
     status: "ONLINE",
-    resolution: "1920x1080",
+    resolution: "1280x720",
     fps: 30.0,
-    fenceY: 540,
+    fenceY: 400,
     isPrimary: false,
   },
 ];
@@ -56,8 +57,24 @@ export async function getEvents(): Promise<SecurityEvent[]> {
     }
     const raw = fs.readFileSync(PATHS.eventsJson, "utf-8").trim();
     if (!raw) return [];
-    
-    const events: SecurityEvent[] = JSON.parse(raw);
+
+    let events: SecurityEvent[] = [];
+    try {
+      events = JSON.parse(raw);
+    } catch {
+      // Handle NDJSON or partial JSON lines
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      events = lines
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .filter((e): e is SecurityEvent => e !== null);
+    }
+
     return events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   } catch (err) {
     console.error("Error reading events.json:", err);
@@ -75,8 +92,23 @@ export async function getAlerts(): Promise<SecurityAlert[]> {
     }
     const raw = fs.readFileSync(PATHS.alertsJson, "utf-8").trim();
     if (!raw) return [];
-    
-    const alerts: SecurityAlert[] = JSON.parse(raw);
+
+    let alerts: SecurityAlert[] = [];
+    try {
+      alerts = JSON.parse(raw);
+    } catch {
+      const lines = raw.split("\n").filter((l) => l.trim().length > 0);
+      alerts = lines
+        .map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return null;
+          }
+        })
+        .filter((a): a is SecurityAlert => a !== null);
+    }
+
     return alerts.map((alert) => ({
       ...alert,
       status: ACKNOWLEDGED_ALERTS.has(alert.alert_id) ? "ACKNOWLEDGED" : (alert.status || "OPEN"),
@@ -131,53 +163,70 @@ export async function getSystemStats(): Promise<SystemStats> {
 }
 
 /**
- * Get ANPR plate records
+ * Get real ANPR plate records dynamically from events and evidence storage
  */
 export async function getPlateRecords(): Promise<PlateRecord[]> {
   const events = await getEvents();
   const plates: PlateRecord[] = [];
 
   for (const evt of events) {
-    if (evt.plate_text) {
+    if (evt.plate_text || evt.event_type === "PLATE_READ") {
+      let text = evt.plate_text || "";
+      if (!text && evt.status && evt.status.includes("Plate ")) {
+        const match = evt.status.match(/Plate\s+([A-Z0-9]+)/i);
+        if (match) text = match[1];
+      }
+      if (!text) text = `TRACK-#${evt.track_id}`;
+
       plates.push({
-        plate_text: evt.plate_text,
-        confidence: evt.plate_confidence || evt.confidence,
+        plate_text: text,
+        confidence: evt.plate_confidence || evt.confidence || 0.85,
         track_id: evt.track_id,
-        camera_id: evt.camera_id,
+        camera_id: evt.camera_id || "BOP-CAM-01",
         timestamp: evt.timestamp,
         frame_number: evt.frame_number,
         crop_path: evt.plate_crop_path || evt.evidence_path,
         event_id: evt.event_id,
-        object_type: evt.object_type || evt.object || "vehicle",
+        object_type: evt.object_type || evt.object || "car",
       });
     }
   }
 
+  // Scan evidence directory for plate evidence files
   if (fs.existsSync(PATHS.evidenceDir)) {
     const files = fs.readdirSync(PATHS.evidenceDir);
     for (const file of files) {
       if (file.startsWith("PLT-") && file.endsWith(".jpg")) {
         const cropPath = `output/evidence/${file}`;
-        const alreadyExists = plates.some((p) => p.crop_path?.includes(file));
+        const alreadyExists = plates.some((p) => p.crop_path?.includes(file) || p.event_id?.includes(file));
         if (!alreadyExists) {
           const parts = file.replace(".jpg", "").split("-");
           const trackId = parts[1] ? parseInt(parts[1], 10) : 1;
           const frameNum = parts[2] ? parseInt(parts[2], 10) : 0;
+          
+          const matchedEvt = events.find((e) => e.track_id === trackId);
+          let text = matchedEvt?.plate_text || "";
+          if (!text && matchedEvt?.status) {
+            const m = matchedEvt.status.match(/Plate\s+([A-Z0-9]+)/i);
+            if (m) text = m[1];
+          }
+          if (!text) text = `PLT-TRK-${trackId}`;
+
           plates.push({
-            plate_text: "MH12AB1234",
-            confidence: 0.92,
+            plate_text: text,
+            confidence: matchedEvt?.plate_confidence || 0.88,
             track_id: isNaN(trackId) ? 1 : trackId,
-            camera_id: "BOP-CAM-01",
-            timestamp: new Date().toISOString(),
+            camera_id: matchedEvt?.camera_id || "BOP-CAM-01",
+            timestamp: matchedEvt?.timestamp || new Date().toISOString(),
             frame_number: isNaN(frameNum) ? 0 : frameNum,
             crop_path: cropPath,
             event_id: `PLT-${file}`,
-            object_type: "truck",
+            object_type: matchedEvt?.object_type || "car",
           });
         }
       }
     }
   }
 
-  return plates;
+  return plates.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 }

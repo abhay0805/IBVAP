@@ -16,8 +16,16 @@ export async function POST(request: NextRequest) {
     }
 
     const body: DetectionRunParams = await request.json();
-    const videoSource = body.videoPath || "videos/test.mp4";
-    const fenceY = body.fenceY ?? 700;
+    const cameraId = body.cameraId || "BOP-CAM-01";
+    let videoSource = body.videoPath;
+    if (!videoSource) {
+      if (cameraId === "BOP-CAM-02") {
+        videoSource = "License Plate Detection Test.mp4";
+      } else {
+        videoSource = "videos/test.mp4";
+      }
+    }
+    const fenceY = body.fenceY ?? (cameraId === "BOP-CAM-02" ? 400 : 700);
     const confidence = body.confidence ?? 0.4;
     const anprEnabled = body.anprEnabled !== false;
     const limitFrames = body.limitFrames ?? 0;
@@ -26,14 +34,17 @@ export async function POST(request: NextRequest) {
       PATHS.pythonScript,
       "--video",
       videoSource,
+      "--camera-id",
+      cameraId,
       "--fence-y",
       String(fenceY),
       "--confidence",
       String(confidence),
+      "--save",
     ];
 
     if (!anprEnabled) {
-      args.push("--no-anpr");
+      args.push("--no-anpr-enabled");
     }
 
     if (limitFrames > 0) {

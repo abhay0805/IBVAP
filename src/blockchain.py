@@ -1,14 +1,25 @@
+"""Blockchain audit ledger for the IBVAP platform.
+
+Provides tamper-evident SHA-256 block mining, evidence hashing, and
+integrity verification for security events.
+"""
+
+from __future__ import annotations
+
 import hashlib
 import json
-import time
-import sqlite3
 import os
+import sqlite3
+import time
+from pathlib import Path
+from typing import Any
 
 DB_PATH = "output/ibvap.db"
 
-def calculate_file_sha256(file_path):
+
+def calculate_file_sha256(file_path: str | Path | None) -> str | None:
     """Generates SHA-256 hash of an evidence image or file to guarantee authenticity."""
-    if not os.path.exists(file_path):
+    if not file_path or not os.path.exists(file_path):
         return None
     sha256_hash = hashlib.sha256()
     with open(file_path, "rb") as f:
@@ -16,12 +27,14 @@ def calculate_file_sha256(file_path):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
-def calculate_block_hash(index, previous_hash, timestamp, event_data, evidence_hash, nonce=0):
+
+def calculate_block_hash(index: int, previous_hash: str, timestamp: str, event_data: dict, evidence_hash: str, nonce: int = 0) -> str:
     """Calculates SHA-256 hash of a blockchain block payload."""
     block_string = f"{index}{previous_hash}{timestamp}{json.dumps(event_data, sort_keys=True)}{evidence_hash}{nonce}"
-    return hashlib.sha256(block_string.encode()).hexdigest()
+    return hashlib.sha256(block_string.encode("utf-8")).hexdigest()
 
-def initialize_blockchain():
+
+def initialize_blockchain() -> None:
     """Initializes the SQLite blockchain_ledger table and creates Genesis block if needed."""
     os.makedirs("output", exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
@@ -52,47 +65,66 @@ def initialize_blockchain():
         genesis_hash = calculate_block_hash(0, "0" * 64, genesis_timestamp, genesis_data, evidence_hash, 0)
 
         cursor.execute("""
-            INSERT INTO blockchain_ledger (block_index, event_id, previous_hash, block_hash, evidence_hash, timestamp, nonce, data_json)
+            INSERT OR IGNORE INTO blockchain_ledger (block_index, event_id, previous_hash, block_hash, evidence_hash, timestamp, nonce, data_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (0, "EVT-GENESIS", "0" * 64, genesis_hash, evidence_hash, genesis_timestamp, 0, json.dumps(genesis_data)))
         conn.commit()
 
     conn.close()
 
-def add_event_to_blockchain(event_id, event_data, evidence_path):
-    """Mines and appends a new cryptographic block to the ledger for a security event."""
+
+def add_event_to_blockchain(event_id: str, event_data: dict[str, Any], evidence_path: str | None) -> tuple[str, str]:
+    """Mines and appends a new cryptographic block to the ledger for a security event (idempotent)."""
     initialize_blockchain()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Get latest block
+    # Check if this event is already mined in the blockchain
+    cursor.execute("SELECT block_hash, evidence_hash FROM blockchain_ledger WHERE event_id = ?", (event_id,))
+    existing = cursor.fetchone()
+    if existing:
+        conn.close()
+        return existing[0], existing[1]
+
+    # Get latest block index and hash
     cursor.execute("SELECT block_index, block_hash FROM blockchain_ledger ORDER BY block_index DESC LIMIT 1")
     last_block = cursor.fetchone()
-    prev_index, prev_hash = last_block
+    if last_block is None:
+        prev_index, prev_hash = 0, "0" * 64
+    else:
+        prev_index, prev_hash = last_block
 
     new_index = prev_index + 1
     timestamp = str(event_data.get("timestamp", time.strftime("%Y-%m-%d %H:%M:%S")))
-    evidence_hash = calculate_file_sha256(evidence_path) or hashlib.sha256(f"NO_FILE_{event_id}".encode()).hexdigest()
+    evidence_hash = calculate_file_sha256(evidence_path) or hashlib.sha256(f"NO_FILE_{event_id}".encode("utf-8")).hexdigest()
 
     # Lightweight Proof-of-Work (nonce calculation)
     nonce = 0
     block_hash = calculate_block_hash(new_index, prev_hash, timestamp, event_data, evidence_hash, nonce)
-    
-    # Simple difficulty target for high performance: hash starts with '0'
+
+    # Difficulty target: hash starts with '0'
     while not block_hash.startswith("0"):
         nonce += 1
         block_hash = calculate_block_hash(new_index, prev_hash, timestamp, event_data, evidence_hash, nonce)
 
-    cursor.execute("""
-        INSERT INTO blockchain_ledger (block_index, event_id, previous_hash, block_hash, evidence_hash, timestamp, nonce, data_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (new_index, event_id, prev_hash, block_hash, evidence_hash, timestamp, nonce, json.dumps(event_data)))
+    try:
+        cursor.execute("""
+            INSERT OR REPLACE INTO blockchain_ledger (block_index, event_id, previous_hash, block_hash, evidence_hash, timestamp, nonce, data_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (new_index, event_id, prev_hash, block_hash, evidence_hash, timestamp, nonce, json.dumps(event_data)))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        cursor.execute("SELECT block_hash, evidence_hash FROM blockchain_ledger WHERE event_id = ?", (event_id,))
+        row = cursor.fetchone()
+        if row:
+            block_hash, evidence_hash = row[0], row[1]
+    finally:
+        conn.close()
 
-    conn.commit()
-    conn.close()
     return block_hash, evidence_hash
 
-def verify_blockchain_integrity():
+
+def verify_blockchain_integrity() -> tuple[bool, str]:
     """Validates the complete blockchain ledger for tampering."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -112,7 +144,7 @@ def verify_blockchain_integrity():
         if index == 0:
             recalculated_hash = calculate_block_hash(0, "0" * 64, timestamp, event_data, evidence_hash, nonce)
             if recalculated_hash != block_hash:
-                return False, f"Genesis Block (Index 0) is corrupted!"
+                return False, "Genesis Block (Index 0) is corrupted!"
             continue
 
         # Check chain linkage with previous block
@@ -126,6 +158,7 @@ def verify_blockchain_integrity():
             return False, f"Block hash mismatch at Block #{index} (Event {event_id})! Data may be tampered."
 
     return True, f"All {len(blocks)} blocks verified successfully. Ledger integrity 100% authentic."
+
 
 if __name__ == "__main__":
     print("Initializing Blockchain Audit Ledger...")

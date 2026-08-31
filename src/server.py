@@ -78,6 +78,27 @@ def api_events():
         })
     return formatted
 
+@app.get("/api/plates")
+def api_plates():
+    """Returns all PLATE_READ events with plate text, track, camera, timestamp, and evidence image URL."""
+    events_data = get_events()
+    plates = []
+    for row in events_data:
+        if row[2] != "PLATE_READ":
+            continue
+        # Parse plate text and status from message if available
+        plates.append({
+            "event_id": row[1],
+            "track_id": row[4],
+            "camera_id": row[5],
+            "timestamp": row[6],
+            "frame_number": row[7],
+            "status": row[8],
+            "evidence_url": f"/evidence/{row[9].split('/')[-1]}" if row[9] else "",
+            "message": row[10] if len(row) > 10 else "",
+        })
+    return plates
+
 @app.get("/api/vehicles")
 def api_vehicles():
     """Lists registered vehicles in border security registry."""

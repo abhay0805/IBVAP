@@ -49,7 +49,14 @@ export function VideoPlayer({
     }
   };
 
-  const activeUrl = currentSource === "annotated" ? processedVideoUrl : sourceVideoUrl;
+  const rawSource =
+    selectedCam === "BOP-CAM-02"
+      ? "/api/media/License Plate Detection Test.mp4"
+      : sourceVideoUrl || "/api/media/videos/test.mp4";
+
+  const annotatedSource = processedVideoUrl || "/api/media/fence_detection.mp4";
+
+  const activeUrl = currentSource === "annotated" ? annotatedSource : rawSource;
 
   const handleCamChange = (newCamId: string) => {
     setSelectedCam(newCamId);

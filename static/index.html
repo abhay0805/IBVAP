@@ -1,284 +1,136 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>IBVAP - Intelligent Border Video Analytics Platform</title>
-    <!-- Google Fonts & Font Awesome Icons -->
+    <title>IBVAP CYPHER — Intelligent Border Video Analytics Platform</title>
+    <meta name="description" content="Real-time border surveillance dashboard with ANPR, fence intrusion detection, and blockchain audit.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-    <!-- Top Command Navigation Bar -->
-    <header class="navbar">
+    <header class="navbar" id="navbar">
         <div class="brand">
-            <div class="shield-logo">
-                <i class="fa-solid fa-shield-halved"></i>
-            </div>
+            <div class="shield-logo"><i class="fa-solid fa-shield-halved"></i></div>
             <div>
-                <h1 class="title">IBVAP <span class="badge-sih">CYPHER</span></h1>
-
+                <h1 class="title">IBVAP <span class="badge-cypher">CYPHER</span></h1>
                 <p class="subtitle">Intelligent Border Video Analytics Platform</p>
             </div>
         </div>
-
         <div class="system-status-bar">
-            <div class="status-indicator">
-                <span class="pulse-dot"></span>
-                <span id="cam-status">CAM-01: ONLINE</span>
-            </div>
-            <div class="threat-pill threat-critical" id="threat-badge">
-                <i class="fa-solid fa-triangle-exclamation"></i>
-                <span id="threat-text">THREAT: HIGH</span>
-            </div>
-            <div class="clock-display" id="live-clock">00:00:00 UTC</div>
+            <div class="status-indicator"><span class="pulse-dot"></span><span>SYSTEM ONLINE</span></div>
+            <div class="threat-pill" id="threat-badge"><i class="fa-solid fa-triangle-exclamation"></i><span id="threat-text">THREAT: —</span></div>
+            <div class="clock-display" id="live-clock">00:00:00</div>
         </div>
     </header>
 
-    <!-- Main Command Dashboard Layout -->
+    <div class="stats-strip">
+        <div class="stat-card"><div class="stat-icon plates"><i class="fa-solid fa-car"></i></div><div><div class="stat-value" id="val-plates">—</div><div class="stat-label">Plates Read</div></div></div>
+        <div class="stat-card"><div class="stat-icon breach"><i class="fa-solid fa-fence"></i></div><div><div class="stat-value" id="val-breaches">—</div><div class="stat-label">Fence Breaches</div></div></div>
+        <div class="stat-card"><div class="stat-icon verified"><i class="fa-solid fa-circle-check"></i></div><div><div class="stat-value" id="val-verified">—</div><div class="stat-label">Verified Vehicles</div></div></div>
+        <div class="stat-card"><div class="stat-icon unauth"><i class="fa-solid fa-circle-xmark"></i></div><div><div class="stat-value" id="val-unauthorized">—</div><div class="stat-label">Unauthorized</div></div></div>
+        <div class="stat-card"><div class="stat-icon chain"><i class="fa-solid fa-link"></i></div><div><div class="stat-value" id="val-blockchain">—</div><div class="stat-label">Blockchain Blocks</div></div></div>
+    </div>
+
     <div class="dashboard-grid">
-        <!-- Sidebar Navigation -->
         <aside class="sidebar">
             <nav class="nav-menu">
-                <button class="nav-btn active" data-tab="tab-surveillance">
-                    <i class="fa-solid fa-video"></i> Live Surveillance
-                </button>
-                <button class="nav-btn" data-tab="tab-anpr">
-                    <i class="fa-solid fa-car-side"></i> ANPR & Vehicles
-                </button>
-                <button class="nav-btn" data-tab="tab-suspicious">
-                    <i class="fa-solid fa-user-ninja"></i> Loitering Analytics
-                </button>
-                <button class="nav-btn" data-tab="tab-blockchain">
-                    <i class="fa-solid fa-cubes-stacked"></i> Blockchain Ledger
-                </button>
-                <button class="nav-btn" data-tab="tab-sitrep">
-                    <i class="fa-solid fa-file-contract"></i> AI SITREP
-                </button>
+                <button class="nav-btn active" data-tab="tab-surveillance"><i class="fa-solid fa-video"></i> Live Surveillance</button>
+                <button class="nav-btn" data-tab="tab-anpr"><i class="fa-solid fa-car-on"></i> ANPR Plates</button>
+                <button class="nav-btn" data-tab="tab-events"><i class="fa-solid fa-triangle-exclamation"></i> Events</button>
+                <button class="nav-btn" data-tab="tab-registry"><i class="fa-solid fa-database"></i> Vehicle Registry</button>
+                <button class="nav-btn" data-tab="tab-blockchain"><i class="fa-solid fa-cubes"></i> Blockchain Ledger</button>
             </nav>
-
-            <!-- Quick Metrics Box -->
-            <div class="metrics-card">
-                <h3><i class="fa-solid fa-chart-line"></i> Operational Overview</h3>
-                <div class="metric-row">
-                    <span>Fence Breaches</span>
-                    <strong id="metric-breaches" class="text-alert">0</strong>
-                </div>
-                <div class="metric-row">
-                    <span>Verified Vehicles</span>
-                    <strong id="metric-verified" class="text-success">0</strong>
-                </div>
-                <div class="metric-row">
-                    <span>Audit Ledger</span>
-                    <strong id="metric-ledger" class="text-cyan">0 Blocks</strong>
-                </div>
+            <div class="sidebar-footer">
+                <div class="cam-info"><i class="fa-solid fa-camera"></i><span>BOP-CAM-01</span></div>
+                <button class="refresh-btn" onclick="refreshAll()"><i class="fa-solid fa-arrows-rotate" id="refresh-icon"></i> Refresh</button>
             </div>
         </aside>
 
-        <!-- Main Content Viewport -->
-        <main class="content-area">
-            <!-- TAB 1: Live Video Surveillance Feed -->
-            <section id="tab-surveillance" class="tab-content active">
+        <main class="main-content">
+            <div class="tab-panel active" id="tab-surveillance">
                 <div class="panel-header">
-                    <h2><i class="fa-solid fa-camera-rotate"></i> Primary Border Video Stream (BOP-CAM-01)</h2>
-                    <div class="panel-actions">
-                        <button class="btn btn-secondary" id="btn-toggle-night">
-                            <i class="fa-solid fa-moon"></i> Thermal Night Mode
-                        </button>
-                        <button class="btn btn-primary" id="btn-refresh-feed">
-                            <i class="fa-solid fa-rotate-right"></i> Refresh Feed
-                        </button>
-                    </div>
+                    <h2><i class="fa-solid fa-video"></i> Live Surveillance Feed</h2>
+                    <span class="live-badge"><span class="pulse-dot-sm"></span> LIVE</span>
                 </div>
-
-                <div class="video-container glass-card">
-                    <div class="feed-overlay-top">
-                        <span class="live-tag"><i class="fa-solid fa-circle"></i> LIVE SURVEILLANCE</span>
-                        <span>FENCE_Y: 700px | AI MODEL: YOLOv8-N</span>
-                    </div>
-                    <img src="/video_feed" alt="Surveillance Stream" class="video-feed-img" id="video-stream-img">
+                <div class="video-container">
+                    <img id="live-stream" src="/video_feed" alt="Live Camera Feed" onerror="this.src=''; this.alt='Stream unavailable — run detect.py first'">
+                    <div class="video-overlay-info"><span>CAM-01</span><span id="stream-time-label">—</span></div>
                 </div>
-
-                <!-- Recent Security Events Log Bar -->
-                <div class="events-panel glass-card">
-                    <h3><i class="fa-solid fa-list-check"></i> Real-time Perimeter Breach Log</h3>
-                    <div class="table-wrapper">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Event ID</th>
-                                    <th>Object</th>
-                                    <th>Track ID</th>
-                                    <th>Timestamp</th>
-                                    <th>Status</th>
-                                    <th>Evidence</th>
-                                </tr>
-                            </thead>
-                            <tbody id="events-table-body">
-                                <tr><td colspan="6" class="text-center">Loading security events...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="recent-alerts-strip">
+                    <div class="strip-label"><i class="fa-solid fa-bolt"></i> Recent Alerts</div>
+                    <div class="strip-items" id="strip-items"><span class="strip-empty">No recent alerts</span></div>
                 </div>
-            </section>
+            </div>
 
-            <!-- TAB 2: ANPR & Vehicle Registry -->
-            <section id="tab-anpr" class="tab-content">
+            <div class="tab-panel" id="tab-anpr">
                 <div class="panel-header">
-                    <h2><i class="fa-solid fa-id-card"></i> Automatic Number Plate Recognition (ANPR) Hub</h2>
-                    <button class="btn btn-primary" onclick="openVehicleModal()">
-                        <i class="fa-solid fa-plus"></i> Register New Vehicle
-                    </button>
+                    <h2><i class="fa-solid fa-car-on"></i> ANPR License Plate Feed</h2>
+                    <span class="count-badge" id="plate-count-badge">0 plates</span>
                 </div>
-
-                <div class="grid-2col">
-                    <div class="glass-card">
-                        <h3><i class="fa-solid fa-car"></i> Registered Whitelist Vehicles</h3>
-                        <div class="table-wrapper">
-                            <table class="data-table">
-                                <thead>
-                                    <tr>
-                                        <th>License Plate</th>
-                                        <th>Type</th>
-                                        <th>Owner</th>
-                                        <th>Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="vehicles-table-body">
-                                    <tr><td colspan="4" class="text-center">Loading vehicles...</td></tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div class="glass-card">
-                        <h3><i class="fa-solid fa-magnifying-glass"></i> Plate Search & Verification</h3>
-                        <div class="search-box">
-                            <input type="text" id="search-plate-input" placeholder="e.g. AI 7060 EC" class="form-input">
-                            <button class="btn btn-secondary" onclick="verifyPlateSearch()">Verify Plate</button>
-                        </div>
-                        <div id="search-result-box" class="search-result-box">
-                            <p class="text-muted">Enter a license plate to test SQLite registry match & normalization.</p>
-                        </div>
-                    </div>
+                <div class="anpr-grid" id="anpr-grid">
+                    <div class="empty-state"><i class="fa-solid fa-car-on fa-2x"></i><p>No plates detected yet. Run the detection pipeline first.</p></div>
                 </div>
-            </section>
+            </div>
 
-            <!-- TAB 3: Loitering & Suspicious Activity Analytics -->
-            <section id="tab-suspicious" class="tab-content">
+            <div class="tab-panel" id="tab-events">
                 <div class="panel-header">
-                    <h2><i class="fa-solid fa-user-secret"></i> Suspicious Activity & Velocity Anomaly Detection</h2>
+                    <h2><i class="fa-solid fa-triangle-exclamation"></i> Security Events</h2>
+                    <span class="count-badge" id="events-count-badge">0 events</span>
                 </div>
-
-                <div class="glass-card">
-                    <h3><i class="fa-solid fa-triangle-exclamation"></i> Detected Trajectory & Dwell Anomalies</h3>
-                    <div class="table-wrapper">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Activity ID</th>
-                                    <th>Track ID</th>
-                                    <th>Anomaly Type</th>
-                                    <th>Severity</th>
-                                    <th>Description</th>
-                                    <th>Time</th>
-                                </tr>
-                            </thead>
-                            <tbody id="suspicious-table-body">
-                                <tr><td colspan="6" class="text-center">Loading suspicious activity logs...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead><tr><th>Event ID</th><th>Type</th><th>Object</th><th>Track</th><th>Camera</th><th>Time</th><th>Status</th><th>Evidence</th></tr></thead>
+                        <tbody id="events-tbody"><tr><td colspan="8" class="empty-row">Loading…</td></tr></tbody>
+                    </table>
                 </div>
-            </section>
+            </div>
 
-            <!-- TAB 4: Blockchain Audit Ledger -->
-            <section id="tab-blockchain" class="tab-content">
+            <div class="tab-panel" id="tab-registry">
                 <div class="panel-header">
-                    <h2><i class="fa-solid fa-cubes"></i> Immutable Blockchain Audit Ledger</h2>
-                    <button class="btn btn-success" onclick="verifyBlockchainAudit()">
-                        <i class="fa-solid fa-circle-check"></i> Audit Integrity Check
-                    </button>
+                    <h2><i class="fa-solid fa-database"></i> Vehicle Registry</h2>
+                    <button class="add-btn" onclick="toggleAddForm()"><i class="fa-solid fa-plus"></i> Add Vehicle</button>
                 </div>
-
-                <div class="audit-status-banner glass-card" id="audit-status-banner">
-                    <i class="fa-solid fa-shield-check icon-large text-success"></i>
-                    <div>
-                        <h4 id="audit-status-title">Ledger Integrity 100% Authentic</h4>
-                        <p id="audit-status-msg">All blocks cryptographically verified with SHA-256 Merkle chain.</p>
+                <div class="add-form" id="add-form" style="display:none">
+                    <h3>Register New Vehicle</h3>
+                    <div class="form-row">
+                        <div class="form-group"><label>Plate Number</label><input type="text" id="reg-plate" placeholder="e.g. KH05ZZK" maxlength="15"></div>
+                        <div class="form-group"><label>Owner Name</label><input type="text" id="reg-owner" placeholder="Full name"></div>
+                        <div class="form-group"><label>Vehicle Type</label><select id="reg-type"><option value="car">Car</option><option value="truck">Truck</option><option value="bus">Bus</option><option value="motorbike">Motorbike</option></select></div>
+                        <div class="form-group"><label>Status</label><select id="reg-status"><option value="VERIFIED">VERIFIED</option><option value="BLACKLISTED">BLACKLISTED</option><option value="SUSPECT">SUSPECT</option></select></div>
                     </div>
-                </div>
-
-                <div class="glass-card">
-                    <h3><i class="fa-solid fa-link"></i> Block Explorer</h3>
-                    <div class="table-wrapper">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>Block #</th>
-                                    <th>Event ID</th>
-                                    <th>Block Hash (SHA-256)</th>
-                                    <th>Evidence Hash</th>
-                                    <th>Nonce</th>
-                                    <th>Timestamp</th>
-                                </tr>
-                            </thead>
-                            <tbody id="blockchain-table-body">
-                                <tr><td colspan="6" class="text-center">Loading audit ledger...</td></tr>
-                            </tbody>
-                        </table>
+                    <div class="form-actions">
+                        <button class="submit-btn" onclick="addVehicle()"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+                        <button class="cancel-btn" onclick="toggleAddForm()">Cancel</button>
                     </div>
+                    <div class="form-msg" id="form-msg"></div>
                 </div>
-            </section>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead><tr><th>Plate</th><th>Owner</th><th>Type</th><th>Status</th></tr></thead>
+                        <tbody id="vehicles-tbody"><tr><td colspan="4" class="empty-row">Loading…</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
 
-            <!-- TAB 5: AI Situation Report (SITREP) -->
-            <section id="tab-sitrep" class="tab-content">
+            <div class="tab-panel" id="tab-blockchain">
                 <div class="panel-header">
-                    <h2><i class="fa-solid fa-brain"></i> AI Intelligence Situation Report Generator</h2>
-                    <button class="btn btn-primary" onclick="generateSitrep()">
-                        <i class="fa-solid fa-wand-magic-sparkles"></i> Generate SITREP
-                    </button>
+                    <h2><i class="fa-solid fa-cubes"></i> Blockchain Audit Ledger</h2>
+                    <button class="verify-btn" onclick="verifyBlockchain()"><i class="fa-solid fa-shield-halved"></i> Verify Integrity</button>
                 </div>
-
-                <div class="glass-card sitrep-container">
-                    <pre id="sitrep-output">Click 'Generate SITREP' to produce an automated military intelligence assessment report for border security commanders.</pre>
+                <div class="verify-result" id="verify-result" style="display:none"></div>
+                <div class="table-wrapper">
+                    <table class="data-table">
+                        <thead><tr><th>#</th><th>Event ID</th><th>Block Hash</th><th>Prev Hash</th><th>Timestamp</th></tr></thead>
+                        <tbody id="blockchain-tbody"><tr><td colspan="5" class="empty-row">Loading…</td></tr></tbody>
+                    </table>
                 </div>
-            </section>
+            </div>
         </main>
     </div>
-
-    <!-- Register Vehicle Modal -->
-    <div class="modal-overlay" id="modal-vehicle">
-        <div class="modal-card glass-card">
-            <div class="modal-header">
-                <h3>Register Vehicle in Whitelist</h3>
-                <button class="close-btn" onclick="closeVehicleModal()">&times;</button>
-            </div>
-            <form id="add-vehicle-form" onsubmit="submitAddVehicle(event)">
-                <div class="form-group">
-                    <label>Plate Number</label>
-                    <input type="text" name="plate_number" required placeholder="e.g. DL 01 AB 1234" class="form-input">
-                </div>
-                <div class="form-group">
-                    <label>Vehicle Type</label>
-                    <input type="text" name="vehicle_type" required placeholder="SUV / TRUCK / CAR" class="form-input">
-                </div>
-                <div class="form-group">
-                    <label>Owner / Unit Name</label>
-                    <input type="text" name="owner" required placeholder="e.g. BSF Patrol Unit" class="form-input">
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" onclick="closeVehicleModal()">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save Vehicle</button>
-                </div>
-            </form>
-        </div>
-    </div>
-
     <script src="/static/app.js"></script>
 </body>
 </html>

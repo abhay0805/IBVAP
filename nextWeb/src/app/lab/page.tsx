@@ -53,11 +53,13 @@ export default function LabPage() {
         `  Limit: ${limitFrames === 0 ? "All Frames" : limitFrames}`,
       ]);
 
+      const cameraId = selectedVideo.includes("License") ? "BOP-CAM-02" : "BOP-CAM-01";
       const res = await fetch("/api/detect/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           videoPath: selectedVideo,
+          cameraId,
           fenceY,
           confidence,
           anprEnabled,
@@ -139,11 +141,19 @@ export default function LabPage() {
               </label>
               <select
                 value={selectedVideo}
-                onChange={(e) => setSelectedVideo(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSelectedVideo(val);
+                  if (val.includes("License")) {
+                    setFenceY(400);
+                  } else {
+                    setFenceY(700);
+                  }
+                }}
                 className="w-full p-2.5 rounded-md bg-canvas border border-hairline text-xs text-ink font-medium focus:outline-none focus:border-primary"
               >
-                <option value="videos/test.mp4">videos/test.mp4 (Surveillance 2560×1440)</option>
-                <option value="videos/plate_probe.mp4">videos/plate_probe.mp4 (ANPR Plate Probe)</option>
+                <option value="videos/test.mp4">videos/test.mp4 (Cam 1 - BOP-CAM-01 Perimeter)</option>
+                <option value="License Plate Detection Test.mp4">License Plate Detection Test.mp4 (Cam 2 - BOP-CAM-02 ANPR)</option>
               </select>
             </div>
 
